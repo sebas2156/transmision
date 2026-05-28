@@ -151,52 +151,96 @@ async function refreshDevices() {
 }
 
 // ===========================
-// Detectar resoluciones reales por probing
+// Detectar resoluciones REALES de la cámara
 // ===========================
 async function detectCameraResolutions(deviceId) {
+  resolutionSelect.innerHTML = '';
+  if (!deviceId) return;
+
   if (resolutionCache.has(deviceId)) {
-    resolutionSelect.innerHTML = '';
     const cached = resolutionCache.get(deviceId);
-    cached.forEach(r => {
-      resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
-    });
-    logEmitter(`✔ ${cached.length} resoluciones (cache)`);
+    if (cached.length > 0) {
+      cached.forEach(r => {
+        resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
+      });
+      logEmitter(`✔ ${cached.length} resoluciones (cache)`);
+    } else {
+      resolutionSelect.add(new Option('Automático', ''));
+      logEmitter('⚠ Sin resoluciones detectadas (cache)');
+    }
     return;
   }
 
-  resolutionSelect.innerHTML = '';
-  const supported = [];
+  let testStream = null;
 
-  for (const [width, height] of COMMON_RESOLUTIONS) {
-    let stream = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: { exact: deviceId },
-          width: { exact: width },
-          height: { exact: height }
+  try {
+    testStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } }
+    });
+
+    const track = testStream.getVideoTracks()[0];
+    const caps = track.getCapabilities();
+    console.log('CAPABILITIES:', caps);
+
+    const supported = [];
+
+    if (caps.width && caps.height) {
+      const minW = caps.width.min || 320;
+      const maxW = caps.width.max || 3840;
+      const minH = caps.height.min || 240;
+      const maxH = caps.height.max || 2160;
+
+      for (const [w, h] of COMMON_RESOLUTIONS) {
+        if (w >= minW && w <= maxW && h >= minH && h <= maxH) {
+          try {
+            await track.applyConstraints({
+              width: { exact: w },
+              height: { exact: h }
+            });
+
+            await new Promise(r => setTimeout(r, 300));
+
+            const settings = track.getSettings();
+
+            if (settings.width === w && settings.height === h) {
+              supported.push({ w, h });
+            }
+          } catch (e) {}
         }
-      });
-
-      const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings();
-
-      if (settings.width === width && settings.height === height) {
-        supported.push({ w: width, h: height });
-        resolutionSelect.add(new Option(`${width}x${height}`, `${width}x${height}`));
       }
-    } catch {}
-    if (stream) {
-      stream.getTracks().forEach(t => t.stop());
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const r of supported) {
+      const key = `${r.w}x${r.h}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(r);
+      }
+    }
+
+    unique.sort((a, b) => (a.w * a.h) - (b.w * b.h));
+
+    if (unique.length > 0) {
+      unique.forEach(r => {
+        resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
+      });
+      logEmitter(`✅ ${unique.length} resoluciones REALES detectadas`);
+    } else {
+      resolutionSelect.add(new Option('Automático', ''));
+      logEmitter('⚠ No se pudieron detectar resoluciones reales');
+    }
+
+    resolutionCache.set(deviceId, unique);
+
+  } catch (err) {
+    logEmitter(`❌ Error detectando resoluciones: ${err.message}`);
+  } finally {
+    if (testStream) {
+      testStream.getTracks().forEach(t => t.stop());
     }
   }
-
-  if (supported.length === 0) {
-    resolutionSelect.add(new Option('Por defecto', 'default'));
-  }
-
-  resolutionCache.set(deviceId, supported);
-  logEmitter(`✔ ${supported.length} resoluciones reales detectadas`);
 }
 
 cameraSelect.addEventListener('change', async () => {
@@ -240,7 +284,7 @@ async function startLocalPreview() {
   };
   
   // Configurar resolución si está seleccionada
-  if (resolution) {
+  if (resolution && resolution.includes('x')) {
     const [width, height] = resolution.split('x');
     videoConstraints.width = { exact: parseInt(width) };
     videoConstraints.height = { exact: parseInt(height) };
@@ -258,7 +302,11 @@ async function startLocalPreview() {
     });
     
     localPreview.srcObject = previewStream;
-    logEmitter(`✅ Vista previa iniciada${resolution ? ` a ${resolution}` : ''}`);
+
+    const settings = previewStream.getVideoTracks()[0].getSettings();
+    document.getElementById('realResolution').textContent = `${settings.width}x${settings.height}`;
+    logEmitter(`📷 Resolución REAL activa: ${settings.width}x${settings.height}`);
+
     return true;
     
   } catch (err) {
@@ -294,7 +342,7 @@ async function startSenderStream() {
     frameRate: { ideal: fps }
   };
   
-  if (resolution) {
+  if (resolution && resolution.includes('x')) {
     const [width, height] = resolution.split('x');
     videoConstraints.width = { exact: parseInt(width) };
     videoConstraints.height = { exact: parseInt(height) };
