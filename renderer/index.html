@@ -2,79 +2,240 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>WebRTC P2P – Señalización Automática (Tailscale)</title>
+  <title>WebRTC P2P – Señalización Multicliente</title>
   <style>
-    body { font-family: sans-serif; margin: 10px; }
-    .tabs { display: flex; gap: 5px; margin-bottom: 10px; }
-    .tab { padding: 8px 16px; border: 1px solid #ccc; cursor: pointer; background: #eee; }
-    .tab.active { background: #4CAF50; color: white; }
-    .panel { display: none; }
-    .panel.active { display: block; }
-    video { width: 100%; max-width: 640px; background: #000; }
-    .controls { margin: 10px 0; }
-    select, input, button { margin: 3px; }
-    .log { height: 80px; overflow-y: auto; background: #f0f0f0; padding: 5px; font-size: 12px; }
-    fieldset { margin-bottom: 10px; }
+    * {
+      box-sizing: border-box;
+    }
+    
+    body { 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .tabs { 
+      display: flex; 
+      gap: 10px; 
+      margin-bottom: 20px;
+    }
+    
+    .tab { 
+      padding: 12px 24px; 
+      border: none;
+      border-radius: 8px;
+      cursor: pointer; 
+      background: #e0e0e0;
+      font-size: 16px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+    }
+    
+    .tab:hover {
+      background: #d0d0d0;
+      transform: translateY(-2px);
+    }
+    
+    .tab.active { 
+      background: #4CAF50; 
+      color: white;
+      box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+    }
+    
+    .panel { 
+      display: none;
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    
+    .panel.active { 
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    
+    .panel > div {
+      min-width: 0;
+    }
+    
+    video { 
+      width: 100%; 
+      max-width: 640px; 
+      background: #000;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+    
+    .controls { 
+      margin: 15px 0; 
+    }
+    
+    select, input, button { 
+      margin: 5px; 
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    
+    button {
+      background: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    button:hover:not(:disabled) {
+      background: #45a049;
+      transform: translateY(-1px);
+    }
+    
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    button.danger {
+      background: #f44336;
+    }
+    
+    button.danger:hover:not(:disabled) {
+      background: #da190b;
+    }
+    
+    .log { 
+      height: 150px; 
+      overflow-y: auto; 
+      background: #f8f9fa; 
+      padding: 10px; 
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+      margin-top: 10px;
+    }
+    
+    fieldset { 
+      margin-bottom: 20px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    
+    legend {
+      font-weight: 600;
+      padding: 0 10px;
+    }
+    
+    label {
+      display: inline-block;
+      margin: 5px 0;
+    }
+    
+    .info {
+      background: #e3f2fd;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    
+    @media (max-width: 768px) {
+      .panel.active {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="tabs">
-    <div class="tab active" data-tab="sender">📤 Emisor</div>
-    <div class="tab" data-tab="receiver">📥 Receptor</div>
-  </div>
+  <div class="container">
+    <div class="tabs">
+      <div class="tab active" data-tab="sender">📤 Emisor</div>
+      <div class="tab" data-tab="receiver">📥 Receptor</div>
+    </div>
 
-  <!-- PANEL EMISOR -->
-  <div id="senderPanel" class="panel active">
-    <fieldset>
-      <legend>Cámara</legend>
-      <select id="cameraSelect"></select>
-      <button id="refreshCameras">↻</button><br>
-      <label>Resolución: <select id="resolutionSelect"><option value="default">Por defecto</option></select></label>
-    </fieldset>
+    <!-- PANEL EMISOR -->
+    <div id="senderPanel" class="panel active">
+      <div>
+        <fieldset>
+          <legend>🎥 Cámara</legend>
+          <select id="cameraSelect" style="width: 200px;"></select>
+          <button id="refreshCameras">↻ Refrescar</button><br>
+        </fieldset>
 
-    <fieldset>
-      <legend>Micrófono</legend>
-      <select id="micSelect"></select>
-      <button id="refreshMics">↻</button><br>
-      <label><input type="checkbox" id="includeAudio" checked> Incluir audio</label><br>
-      <label><input type="checkbox" id="noiseReduction"> Reducción de ruido</label><br>
-      <button id="testMic">🎤 Probar micrófono (local)</button>
-    </fieldset>
+        <fieldset>
+          <legend>🎤 Micrófono</legend>
+          <select id="micSelect" style="width: 200px;"></select>
+          <button id="refreshMics">↻ Refrescar</button><br>
+          <label><input type="checkbox" id="includeAudio" checked> Incluir audio</label><br>
+          <label><input type="checkbox" id="noiseReduction"> Reducción de ruido</label><br>
+          <button id="testMic">🎤 Probar micrófono</button>
+        </fieldset>
 
-    <fieldset>
-      <legend>Configuración</legend>
-      <label>FPS: <input type="number" id="fps" min="1" max="60" value="30"></label><br>
-      <label>Bitrate video (kbps): <input type="number" id="bitrate" value="3000"></label>
-    </fieldset>
+        <fieldset>
+          <legend>⚙ Configuración</legend>
+          <label>FPS: <input type="number" id="fps" min="1" max="60" value="30" style="width: 70px;"></label><br>
+          <label>Bitrate video: <input type="number" id="bitrate" value="3000" style="width: 100px;"> kbps</label>
+        </fieldset>
+      </div>
+      
+      <div>
+        <fieldset>
+          <legend>🔌 Conexión al Receptor</legend>
+          <label>IP del receptor: <input type="text" id="receiverIP" value="localhost" placeholder="ej: 192.168.1.100"></label><br>
+          <label>Puerto: <input type="number" id="receiverPort" value="3000"></label><br>
+          <button id="connectSender">🔗 Conectar</button>
+          <button id="disconnectSender" disabled>⏹ Desconectar</button>
+          <div class="info">
+            💡 Tips:<br>
+            • Usa "localhost" si todo está en la misma PC<br>
+            • Usa la IP real (ej: 192.168.x.x) para conexiones LAN<br>
+            • Asegúrate que el firewall permita la conexión
+          </div>
+        </fieldset>
 
-    <fieldset>
-      <legend>Conexión al Receptor</legend>
-      <label>IP del receptor: <input type="text" id="receiverIP" value="127.0.0.1"></label><br>
-      <label>Puerto: <input type="number" id="receiverPort" value="3000"></label><br>
-      <button id="connectSender">🔗 Conectar</button>
-      <button id="disconnectSender" disabled>⏹ Desconectar</button>
-    </fieldset>
+        <div class="log" id="senderLog"></div>
+      </div>
+    </div>
 
-    <div class="log" id="senderLog"></div>
-  </div>
+    <!-- PANEL RECEPTOR -->
+    <div id="receiverPanel" class="panel">
+      <div>
+        <fieldset>
+          <legend>🖥 Servidor de Señalización</legend>
+          <label>Puerto: <input type="number" id="serverPort" value="3000"></label><br>
+          <button id="startServer">▶ Iniciar servidor</button>
+          <button id="stopServer" disabled class="danger">⏹ Detener</button>
+          <p>🌐 Tu IP: <strong><span id="localIP">cargando...</span></strong></p>
+          <div class="info">
+            💡 Comparte esta IP con el emisor para la conexión
+          </div>
+        </fieldset>
 
-  <!-- PANEL RECEPTOR -->
-  <div id="receiverPanel" class="panel">
-    <fieldset>
-      <legend>Servidor de Señalización</legend>
-      <label>Puerto: <input type="number" id="serverPort" value="3000"></label>
-      <button id="startServer">▶ Iniciar servidor</button>
-      <button id="stopServer" disabled>⏹ Detener</button>
-      <p>Tu IP: <span id="localIP">cargando...</span></p>
-    </fieldset>
+        <fieldset>
+          <legend>📺 Controles de Video</legend>
+          <button id="fullscreenBtn">🖥 Pantalla Completa</button>
+        </fieldset>
+      </div>
+      
+      <div>
+        <fieldset>
+          <legend>🎬 Video Remoto</legend>
+          <video id="remoteVideo" autoplay playsinline></video>
+        </fieldset>
 
-    <fieldset>
-      <legend>Reproducción</legend>
-      <video id="remoteVideo" autoplay playsinline muted></video>
-      <button id="fullscreenBtn">📺 Pantalla Completa</button>
-    </fieldset>
-
-    <div class="log" id="receiverLog"></div>
+        <div class="log" id="receiverLog"></div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
