@@ -72,6 +72,7 @@
       background: #000;
       border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      object-fit: contain;
     }
     
     .controls { 
@@ -209,7 +210,8 @@
           <label>Resolución: <select id="resolutionSelect">
             <option value="">Selecciona cámara primero</option>
           </select></label><br>
-          <label>FPS: <input type="number" id="fps" min="1" max="60" value="30" style="width: 70px;"></label>
+          <label>FPS: <input type="range" id="fpsSlider" min="1" max="60" value="30" style="width:120px;vertical-align:middle;">
+          <span id="fpsDisplay">30</span> fps</label>
         </fieldset>
 
         <fieldset>
@@ -218,7 +220,6 @@
           <button id="refreshMics">↻ Refrescar</button><br>
           <label><input type="checkbox" id="includeAudio" checked> Incluir audio</label><br>
           <label><input type="checkbox" id="noiseReduction"> Reducción de ruido (Chromium DSP)</label><br>
-          <label><input type="checkbox" id="advancedNoiseReduction"> RNNoise avanzado (Experimental)</label><br>
           <label><input type="checkbox" id="echoCancellation" checked> Cancelación de eco</label><br>
           <label><input type="checkbox" id="autoGainControl" checked> Control automático de ganancia</label><br>
           <button id="testMic">🎤 Probar micrófono</button>

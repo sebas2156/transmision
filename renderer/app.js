@@ -12,27 +12,11 @@ let statsInterval = null;
 
 const resolutionCache = new Map();
 
-const COMMON_RESOLUTIONS = [
-  [320, 240],
-  [640, 480],
-  [800, 600],
-  [1024, 768],
-  [1280, 720],
-  [1366, 768],
-  [1600, 900],
-  [1920, 1080],
-  [2560, 1440],
-  [3840, 2160]
-];
-
 // Colas para ICE candidates
 let pendingSenderIceCandidates = [];
 let pendingReceiverIceCandidates = [];
 
-// Procesamiento de audio
-let audioContext = null;
-let audioWorkletNode = null;
-let processedAudioTrack = null;
+
 
 const configuration = {
   iceServers: [
@@ -60,6 +44,8 @@ const senderLog = document.getElementById('senderLog');
 const localPreview = document.getElementById('localPreview');
 const applyBitrateBtn = document.getElementById('applyBitrate');
 const hardwareAcceleration = document.getElementById('hardwareAcceleration');
+const fpsSlider = document.getElementById('fpsSlider');
+const fpsDisplay = document.getElementById('fpsDisplay');
 
 // Receptor
 const remoteVideo = document.getElementById('remoteVideo');
@@ -151,7 +137,7 @@ async function refreshDevices() {
 }
 
 // ===========================
-// Detectar resoluciones REALES de la cámara
+// Poblar lista de resoluciones disponibles
 // ===========================
 async function detectCameraResolutions(deviceId) {
   resolutionSelect.innerHTML = '';
@@ -159,96 +145,90 @@ async function detectCameraResolutions(deviceId) {
 
   if (resolutionCache.has(deviceId)) {
     const cached = resolutionCache.get(deviceId);
-    if (cached.length > 0) {
-      cached.forEach(r => {
-        resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
-      });
-      logEmitter(`✔ ${cached.length} resoluciones (cache)`);
-    } else {
-      resolutionSelect.add(new Option('Automático', ''));
-      logEmitter('⚠ Sin resoluciones detectadas (cache)');
-    }
+    cached.forEach(r => {
+      const label = r.native
+        ? `🎯 Nativa ${r.w}x${r.h} @${r.fps}fps`
+        : `${r.w}x${r.h} @${r.fps}fps`;
+      resolutionSelect.add(new Option(label, `${r.w}x${r.h}@${r.fps}`));
+    });
+    logEmitter(`✔ ${cached.length} modos`);
     return;
   }
 
-  let testStream = null;
+  logEmitter('🔍 Detectando resolución nativa...');
 
+  let nw = 0, nh = 0, nfps = 30;
+  let nativeStream = null;
   try {
-    testStream = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: deviceId } }
+    nativeStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } },
+      audio: false
     });
-
-    const track = testStream.getVideoTracks()[0];
-    const caps = track.getCapabilities();
-    console.log('CAPABILITIES:', caps);
-
-    const supported = [];
-
-    if (caps.width && caps.height) {
-      const minW = caps.width.min || 320;
-      const maxW = caps.width.max || 3840;
-      const minH = caps.height.min || 240;
-      const maxH = caps.height.max || 2160;
-
-      for (const [w, h] of COMMON_RESOLUTIONS) {
-        if (w >= minW && w <= maxW && h >= minH && h <= maxH) {
-          try {
-            await track.applyConstraints({
-              width: { exact: w },
-              height: { exact: h }
-            });
-
-            await new Promise(r => setTimeout(r, 300));
-
-            const settings = track.getSettings();
-
-            if (settings.width === w && settings.height === h) {
-              supported.push({ w, h });
-            }
-          } catch (e) {}
-        }
-      }
-    }
-
-    const unique = [];
-    const seen = new Set();
-    for (const r of supported) {
-      const key = `${r.w}x${r.h}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        unique.push(r);
-      }
-    }
-
-    unique.sort((a, b) => (a.w * a.h) - (b.w * b.h));
-
-    if (unique.length > 0) {
-      unique.forEach(r => {
-        resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
-      });
-      logEmitter(`✅ ${unique.length} resoluciones REALES detectadas`);
-    } else {
-      resolutionSelect.add(new Option('Automático', ''));
-      logEmitter('⚠ No se pudieron detectar resoluciones reales');
-    }
-
-    resolutionCache.set(deviceId, unique);
-
-  } catch (err) {
-    logEmitter(`❌ Error detectando resoluciones: ${err.message}`);
+    const s = nativeStream.getVideoTracks()[0].getSettings();
+    nw = s.width; nh = s.height; nfps = Math.round(s.frameRate || 30);
+  } catch (e) {
+    logEmitter(`❌ Error accediendo a cámara: ${e.message}`);
+    resolutionSelect.add(new Option('Automático', ''));
+    return;
   } finally {
-    if (testStream) {
-      testStream.getTracks().forEach(t => t.stop());
+    if (nativeStream) nativeStream.getTracks().forEach(t => t.stop());
+  }
+
+  const ALL_RESOLUTIONS = [
+    { w: 320, h: 240 },
+    { w: 640, h: 480 },
+    { w: 800, h: 600 },
+    { w: 1024, h: 768 },
+    { w: 1280, h: 720 },
+    { w: 1366, h: 768 },
+    { w: 1600, h: 900 },
+    { w: 1920, h: 1080 },
+    { w: 2560, h: 1440 },
+    { w: 3840, h: 2160 },
+  ];
+
+  const found = [];
+  const added = new Set();
+
+  // Nativa siempre primero
+  const nativeKey = `${nw}x${nh}@${nfps}`;
+  added.add(nativeKey);
+  found.push({ w: nw, h: nh, fps: nfps, native: true });
+
+  for (const { w, h } of ALL_RESOLUTIONS) {
+    if (w === nw && h === nh && nfps === 30) continue;
+    // Para cada resolución, ofrecer FPS comunes
+    for (const fps of [15, 24, 30, 60]) {
+      const key = `${w}x${h}@${fps}`;
+      if (!added.has(key)) {
+        added.add(key);
+        found.push({ w, h, fps, native: false });
+      }
     }
   }
+
+  found.sort((a, b) => a.w * a.h - b.w * b.h);
+
+  resolutionSelect.innerHTML = '';
+  found.forEach(r => {
+    const label = r.native
+      ? `🎯 Nativa ${r.w}x${r.h} @${r.fps}fps`
+      : `${r.w}x${r.h} @${r.fps}fps`;
+    resolutionSelect.add(new Option(label, `${r.w}x${r.h}@${r.fps}`));
+  });
+
+  resolutionCache.set(deviceId, found);
+  logEmitter(`✅ ${found.length} resoluciones disponibles (nativa: ${nw}x${nh})`);
 }
 
 cameraSelect.addEventListener('change', async () => {
   const deviceId = cameraSelect.value;
   if (!deviceId) return;
 
-  logEmitter('🔍 Detectando resoluciones soportadas...');
+  logEmitter('🔍 Analizando cámara...');
   await detectCameraResolutions(deviceId);
+  syncFpsSlider();
+  startLocalPreview();
 });
 
 document.getElementById('refreshCameras').addEventListener('click', refreshDevices);
@@ -279,15 +259,21 @@ async function startLocalPreview() {
     return false;
   }
   
+  const sliderFps = parseInt(fpsSlider.value) || 30;
+
   let videoConstraints = {
     deviceId: { exact: videoId }
   };
   
-  // Configurar resolución si está seleccionada
   if (resolution && resolution.includes('x')) {
-    const [width, height] = resolution.split('x');
-    videoConstraints.width = { exact: parseInt(width) };
-    videoConstraints.height = { exact: parseInt(height) };
+    const [resPart, fpsPart] = resolution.split('@');
+    const [width, height] = resPart.split('x');
+    videoConstraints.width = { ideal: parseInt(width) };
+    videoConstraints.height = { ideal: parseInt(height) };
+    const resFps = fpsPart ? parseInt(fpsPart) : 60;
+    videoConstraints.frameRate = { ideal: Math.min(resFps, sliderFps) };
+  } else {
+    videoConstraints.frameRate = { ideal: sliderFps };
   }
   
   try {
@@ -315,9 +301,31 @@ async function startLocalPreview() {
   }
 }
 
-// Iniciar preview al seleccionar cámara o resolución
-cameraSelect.addEventListener('change', () => startLocalPreview());
-resolutionSelect.addEventListener('change', () => startLocalPreview());
+// Sincronizar slider FPS con la resolución seleccionada
+function syncFpsSlider() {
+  const val = resolutionSelect.value;
+  if (val && val.includes('@')) {
+    const [, fpsPart] = val.split('@');
+    const maxFps = parseInt(fpsPart) || 30;
+    fpsSlider.max = maxFps;
+    if (parseInt(fpsSlider.value) > maxFps) {
+      fpsSlider.value = maxFps;
+    }
+  } else {
+    fpsSlider.max = 60;
+  }
+  fpsDisplay.textContent = fpsSlider.value;
+}
+
+resolutionSelect.addEventListener('change', () => {
+  syncFpsSlider();
+  startLocalPreview();
+});
+
+fpsSlider.addEventListener('input', () => {
+  fpsDisplay.textContent = fpsSlider.value;
+  startLocalPreview();
+});
 
 // ===========================
 // Iniciar stream de transmisión (puede ser diferente al preview)
@@ -329,32 +337,34 @@ async function startSenderStream() {
   const noiseReduction = document.getElementById('noiseReduction').checked;
   const echoCancellation = document.getElementById('echoCancellation').checked;
   const autoGainControl = document.getElementById('autoGainControl').checked;
-  const fps = parseInt(document.getElementById('fps').value) || 30;
   const resolution = resolutionSelect.value;
-  const advancedNoiseReduction = document.getElementById('advancedNoiseReduction').checked;
   
   if (!videoId) {
     throw new Error('Selecciona una cámara');
   }
   
+  const sliderFps = parseInt(fpsSlider.value) || 30;
+
   let videoConstraints = {
-    deviceId: { exact: videoId },
-    frameRate: { ideal: fps }
+    deviceId: { exact: videoId }
   };
-  
+
   if (resolution && resolution.includes('x')) {
-    const [width, height] = resolution.split('x');
-    videoConstraints.width = { exact: parseInt(width) };
-    videoConstraints.height = { exact: parseInt(height) };
+    const [resPart, fpsPart] = resolution.split('@');
+    const [width, height] = resPart.split('x');
+    videoConstraints.width = { ideal: parseInt(width) };
+    videoConstraints.height = { ideal: parseInt(height) };
+    const resFps = fpsPart ? parseInt(fpsPart) : 60;
+    videoConstraints.frameRate = { ideal: Math.min(resFps, sliderFps) };
+  } else {
+    videoConstraints.frameRate = { ideal: sliderFps };
   }
-  
+
   const audioConstraints = includeAudio ? {
     deviceId: { exact: audioId },
-    echoCancellation: echoCancellation,
-    noiseSuppression: noiseReduction,
-    autoGainControl: autoGainControl,
-    sampleRate: 48000,
-    channelCount: 1
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false
   } : false;
   
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -362,59 +372,27 @@ async function startSenderStream() {
     audio: audioConstraints
   });
   
-  // Si se habilita RNNoise avanzado, procesar audio
-  if (includeAudio && advancedNoiseReduction) {
-    logEmitter('🎧 Aplicando RNNoise avanzado...');
-    try {
-      const processedStream = await applyRNNoise(stream);
-      return processedStream;
-    } catch (err) {
-      logEmitter(`⚠️ RNNoise falló, usando audio original: ${err.message}`);
-      return stream;
-    }
-  }
-  
   return stream;
 }
 
 // ===========================
-// Aplicar RNNoise al audio (simulado con procesamiento básico)
+// Configurar Opus baja latencia vía SDP
 // ===========================
-async function applyRNNoise(inputStream) {
-  if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: 48000,
-      latencyHint: 'interactive'
-    });
+function setOpusLowLatency(sdp) {
+  const opusRegex = /a=rtpmap:(\d+) opus\/48000(\/\d+)?/g;
+  let match;
+  while ((match = opusRegex.exec(sdp)) !== null) {
+    const pt = match[1];
+    const fmtpRegex = new RegExp(`a=fmtp:${pt} (.*?)(\\r?\\n)`, 'g');
+    const fmtpMatch = fmtpRegex.exec(sdp);
+    const params = 'stereo=0;maxplaybackrate=16000;usedtx=1;maxaveragebitrate=16000';
+    if (fmtpMatch) {
+      sdp = sdp.replace(fmtpMatch[0], `a=fmtp:${pt} ${fmtpMatch[1]};${params}${fmtpMatch[2]}`);
+    } else {
+      sdp = sdp.replace(match[0], `${match[0]}\r\na=fmtp:${pt} ${params}`);
+    }
   }
-  
-  const source = audioContext.createMediaStreamSource(inputStream);
-  const destination = audioContext.createMediaStreamDestination();
-  
-  // Filtro pasa bajos simple como demostración
-  // En producción, aquí se integraría RNNoise WASM
-  const lowpass = audioContext.createBiquadFilter();
-  lowpass.type = 'lowpass';
-  lowpass.frequency.value = 8000;
-  
-  source.connect(lowpass);
-  lowpass.connect(destination);
-  
-  // Mantener audioContext activo
-  if (audioContext.state === 'suspended') {
-    await audioContext.resume();
-  }
-  
-  // Reemplazar pista de audio
-  const newAudioTrack = destination.stream.getAudioTracks()[0];
-  const oldAudioTrack = inputStream.getAudioTracks()[0];
-  
-  inputStream.removeTrack(oldAudioTrack);
-  inputStream.addTrack(newAudioTrack);
-  oldAudioTrack.stop();
-  
-  logEmitter('✅ RNNoise aplicado - Reducción de ruido avanzada activa');
-  return inputStream;
+  return sdp;
 }
 
 // ===========================
@@ -504,6 +482,12 @@ connectSenderBtn.addEventListener('click', async () => {
     // Iniciar stream de transmisión (puede ser diferente al preview)
     logEmitter('🎥 Iniciando stream de transmisión...');
     senderStream = await startSenderStream();
+    const senderVideoTrack = senderStream.getVideoTracks()[0];
+    if (senderVideoTrack) {
+      const s = senderVideoTrack.getSettings();
+      document.getElementById('realResolution').textContent = `${s.width}x${s.height}`;
+      logEmitter(`📷 Resolución REAL: ${s.width}x${s.height}`);
+    }
     logEmitter('✔ Stream de transmisión iniciado');
     
     // Crear peer connection para emisor
@@ -553,10 +537,11 @@ connectSenderBtn.addEventListener('click', async () => {
       logEmitter(`📺 Track recibido (emisor): ${event.track.kind}`);
     };
     
-    // Crear oferta
+    // Crear oferta con Opus baja latencia
     const offer = await senderPeer.createOffer();
+    offer.sdp = setOpusLowLatency(offer.sdp);
     await senderPeer.setLocalDescription(offer);
-    logEmitter('✔ Oferta SDP creada');
+    logEmitter('✔ Oferta SDP creada (Opus low-latency)');
     
     // Conectar al servidor de señalización
     const ip = receiverIP.value.trim();
@@ -647,15 +632,16 @@ function disconnectSender() {
     senderStream.getTracks().forEach(t => t.stop());
     senderStream = null;
   }
-  if (audioContext) {
-    audioContext.close();
-    audioContext = null;
+  if (previewStream) {
+    previewStream.getTracks().forEach(t => t.stop());
+    previewStream = null;
   }
   pendingSenderIceCandidates = [];
   connectSenderBtn.disabled = false;
   disconnectSenderBtn.disabled = true;
   document.getElementById('senderStats').style.display = 'none';
   logEmitter('⏹ Desconectado');
+  startLocalPreview();
 }
 
 disconnectSenderBtn.addEventListener('click', disconnectSender);
