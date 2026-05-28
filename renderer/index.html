@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>WebRTC P2P – Señalización Automática (Tailscale)</title>
+  <style>
+    body { font-family: sans-serif; margin: 10px; }
+    .tabs { display: flex; gap: 5px; margin-bottom: 10px; }
+    .tab { padding: 8px 16px; border: 1px solid #ccc; cursor: pointer; background: #eee; }
+    .tab.active { background: #4CAF50; color: white; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    video { width: 100%; max-width: 640px; background: #000; }
+    .controls { margin: 10px 0; }
+    select, input, button { margin: 3px; }
+    .log { height: 80px; overflow-y: auto; background: #f0f0f0; padding: 5px; font-size: 12px; }
+    fieldset { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <div class="tab active" data-tab="sender">📤 Emisor</div>
+    <div class="tab" data-tab="receiver">📥 Receptor</div>
+  </div>
+
+  <!-- PANEL EMISOR -->
+  <div id="senderPanel" class="panel active">
+    <fieldset>
+      <legend>Cámara</legend>
+      <select id="cameraSelect"></select>
+      <button id="refreshCameras">↻</button><br>
+      <label>Resolución: <select id="resolutionSelect"><option value="default">Por defecto</option></select></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Micrófono</legend>
+      <select id="micSelect"></select>
+      <button id="refreshMics">↻</button><br>
+      <label><input type="checkbox" id="includeAudio" checked> Incluir audio</label><br>
+      <label><input type="checkbox" id="noiseReduction"> Reducción de ruido</label><br>
+      <button id="testMic">🎤 Probar micrófono (local)</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Configuración</legend>
+      <label>FPS: <input type="number" id="fps" min="1" max="60" value="30"></label><br>
+      <label>Bitrate video (kbps): <input type="number" id="bitrate" value="3000"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Conexión al Receptor</legend>
+      <label>IP del receptor: <input type="text" id="receiverIP" value="127.0.0.1"></label><br>
+      <label>Puerto: <input type="number" id="receiverPort" value="3000"></label><br>
+      <button id="connectSender">🔗 Conectar</button>
+      <button id="disconnectSender" disabled>⏹ Desconectar</button>
+    </fieldset>
+
+    <div class="log" id="senderLog"></div>
+  </div>
+
+  <!-- PANEL RECEPTOR -->
+  <div id="receiverPanel" class="panel">
+    <fieldset>
+      <legend>Servidor de Señalización</legend>
+      <label>Puerto: <input type="number" id="serverPort" value="3000"></label>
+      <button id="startServer">▶ Iniciar servidor</button>
+      <button id="stopServer" disabled>⏹ Detener</button>
+      <p>Tu IP: <span id="localIP">cargando...</span></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Reproducción</legend>
+      <video id="remoteVideo" autoplay playsinline muted></video>
+      <button id="fullscreenBtn">📺 Pantalla Completa</button>
+    </fieldset>
+
+    <div class="log" id="receiverLog"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
