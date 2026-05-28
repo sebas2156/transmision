@@ -18,6 +18,17 @@ let wss = null;
 const clients = new Map();
 let nextClientId = 1;
 
+function safeSend(channel, data) {
+  if (
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    mainWindow.webContents &&
+    !mainWindow.webContents.isDestroyed()
+  ) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -34,6 +45,17 @@ function createWindow() {
 }
 
 app.whenReady().then(createWindow);
+
+app.on('before-quit', () => {
+  if (wss) {
+    wss.clients.forEach(client => {
+      try {
+        client.close();
+      } catch {}
+    });
+    wss.close();
+  }
+});
 
 app.on('window-all-closed', () => {
   if (wss) wss.close();
@@ -54,7 +76,7 @@ ipcMain.on('start-server', (event, port) => {
 
   wss.on('listening', () => {
     console.log(`Servidor WebSocket iniciado en puerto ${port}`);
-    mainWindow.webContents.send('server-started', port);
+    safeSend('server-started', port);
   });
 
   wss.on('connection', (ws) => {
@@ -80,7 +102,7 @@ ipcMain.on('start-server', (event, port) => {
         });
         
         if (msg.type === 'offer' || msg.type === 'answer' || msg.type === 'candidate') {
-          mainWindow.webContents.send('signal-received', {
+          safeSend('signal-received', {
             type: msg.type,
             data: msg,
             senderId: clientId
@@ -95,7 +117,7 @@ ipcMain.on('start-server', (event, port) => {
     ws.on('close', () => {
       clients.delete(clientId);
       console.log(`Cliente ${clientId} desconectado. Clientes restantes: ${clients.size}`);
-      mainWindow.webContents.send('ws-disconnected', clientId);
+      safeSend('ws-disconnected', clientId);
     });
     
     ws.on('error', (error) => {
@@ -105,7 +127,7 @@ ipcMain.on('start-server', (event, port) => {
 
   wss.on('error', (err) => {
     console.error('Error del servidor WebSocket:', err);
-    mainWindow.webContents.send('server-error', err.message);
+    safeSend('server-error', err.message);
   });
 });
 
@@ -120,7 +142,7 @@ ipcMain.on('stop-server', () => {
     wss.close();
     wss = null;
   }
-  mainWindow.webContents.send('server-stopped');
+  safeSend('server-stopped');
 });
 
 ipcMain.on('ws-broadcast', (event, data) => {

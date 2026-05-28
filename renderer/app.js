@@ -10,6 +10,21 @@ let signalingSocket = null;
 let myClientId = null;
 let statsInterval = null;
 
+const resolutionCache = new Map();
+
+const COMMON_RESOLUTIONS = [
+  [320, 240],
+  [640, 480],
+  [800, 600],
+  [1024, 768],
+  [1280, 720],
+  [1366, 768],
+  [1600, 900],
+  [1920, 1080],
+  [2560, 1440],
+  [3840, 2160]
+];
+
 // Colas para ICE candidates
 let pendingSenderIceCandidates = [];
 let pendingReceiverIceCandidates = [];
@@ -136,74 +151,60 @@ async function refreshDevices() {
 }
 
 // ===========================
-// Obtener resoluciones reales de la cámara
+// Detectar resoluciones reales por probing
 // ===========================
+async function detectCameraResolutions(deviceId) {
+  if (resolutionCache.has(deviceId)) {
+    resolutionSelect.innerHTML = '';
+    const cached = resolutionCache.get(deviceId);
+    cached.forEach(r => {
+      resolutionSelect.add(new Option(`${r.w}x${r.h}`, `${r.w}x${r.h}`));
+    });
+    logEmitter(`✔ ${cached.length} resoluciones (cache)`);
+    return;
+  }
+
+  resolutionSelect.innerHTML = '';
+  const supported = [];
+
+  for (const [width, height] of COMMON_RESOLUTIONS) {
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId },
+          width: { exact: width },
+          height: { exact: height }
+        }
+      });
+
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+
+      if (settings.width === width && settings.height === height) {
+        supported.push({ w: width, h: height });
+        resolutionSelect.add(new Option(`${width}x${height}`, `${width}x${height}`));
+      }
+    } catch {}
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+    }
+  }
+
+  if (supported.length === 0) {
+    resolutionSelect.add(new Option('Por defecto', 'default'));
+  }
+
+  resolutionCache.set(deviceId, supported);
+  logEmitter(`✔ ${supported.length} resoluciones reales detectadas`);
+}
+
 cameraSelect.addEventListener('change', async () => {
   const deviceId = cameraSelect.value;
   if (!deviceId) return;
 
-  logEmitter(`Obteniendo resoluciones para cámara seleccionada...`);
-  
-  try {
-    // Stream temporal para obtener capacidades
-    const tempStream = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: deviceId } }
-    });
-    
-    const track = tempStream.getVideoTracks()[0];
-    const capabilities = track.getCapabilities();
-    
-    resolutionSelect.innerHTML = '<option value="">Selecciona resolución</option>';
-    
-    // Resoluciones comunes
-    const commonResolutions = [
-      { width: 320, height: 240, label: "320x240 (4:3)" },
-      { width: 640, height: 480, label: "640x480 (4:3)" },
-      { width: 854, height: 480, label: "854x480 (16:9)" },
-      { width: 1280, height: 720, label: "1280x720 HD" },
-      { width: 1366, height: 768, label: "1366x768" },
-      { width: 1600, height: 900, label: "1600x900" },
-      { width: 1920, height: 1080, label: "1920x1080 Full HD" },
-      { width: 2560, height: 1440, label: "2560x1440 2K" },
-      { width: 3840, height: 2160, label: "3840x2160 4K" }
-    ];
-    
-    // Filtrar resoluciones soportadas
-    const supportedResolutions = commonResolutions.filter(res => {
-      const widthSupported = !capabilities.width || 
-        (res.width >= capabilities.width.min && 
-         res.width <= capabilities.width.max);
-      const heightSupported = !capabilities.height || 
-        (res.height >= capabilities.height.min && 
-         res.height <= capabilities.height.max);
-      return widthSupported && heightSupported;
-    });
-    
-    // Agregar resoluciones soportadas
-    supportedResolutions.forEach(res => {
-      const option = new Option(res.label, `${res.width}x${res.height}`);
-      resolutionSelect.add(option);
-    });
-    
-    // Si no hay resoluciones comunes, crear rango personalizado
-    if (supportedResolutions.length === 0 && capabilities.width && capabilities.height) {
-      const step = Math.floor((capabilities.width.max - capabilities.width.min) / 4);
-      for (let w = capabilities.width.min; w <= capabilities.width.max; w += step) {
-        const h = Math.floor(w * (capabilities.height.max / capabilities.width.max));
-        if (w <= capabilities.width.max && h <= capabilities.height.max) {
-          resolutionSelect.add(new Option(`${w}x${h} (personalizado)`, `${w}x${h}`));
-        }
-      }
-    }
-    
-    track.stop();
-    tempStream.getTracks().forEach(t => t.stop());
-    
-    logEmitter(`✅ ${supportedResolutions.length} resoluciones disponibles`);
-    
-  } catch (err) {
-    logEmitter(`❌ Error obteniendo resoluciones: ${err.message}`);
-  }
+  logEmitter('🔍 Detectando resoluciones soportadas...');
+  await detectCameraResolutions(deviceId);
 });
 
 document.getElementById('refreshCameras').addEventListener('click', refreshDevices);
