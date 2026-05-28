@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>WebRTC P2P – Señalización Multicliente</title>
+  <title>WebRTC P2P – Sistema Profesional de Streaming</title>
   <style>
     * {
       box-sizing: border-box;
@@ -112,6 +112,14 @@
       background: #da190b;
     }
     
+    button.secondary {
+      background: #2196F3;
+    }
+    
+    button.secondary:hover:not(:disabled) {
+      background: #1976D2;
+    }
+    
     .log { 
       height: 150px; 
       overflow-y: auto; 
@@ -122,6 +130,29 @@
       border-radius: 6px;
       border: 1px solid #e0e0e0;
       margin-top: 10px;
+    }
+    
+    .stats {
+      background: #e8f5e9;
+      padding: 10px;
+      border-radius: 6px;
+      margin-top: 10px;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+    }
+    
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 2px 5px;
+    }
+    
+    .stat-label {
+      font-weight: bold;
+      color: #2e7d32;
     }
     
     fieldset { 
@@ -149,6 +180,11 @@
       font-size: 14px;
     }
     
+    .warning {
+      background: #fff3e0;
+      border-left: 4px solid #ff9800;
+    }
+    
     @media (max-width: 768px) {
       .panel.active {
         grid-template-columns: 1fr;
@@ -170,6 +206,10 @@
           <legend>🎥 Cámara</legend>
           <select id="cameraSelect" style="width: 200px;"></select>
           <button id="refreshCameras">↻ Refrescar</button><br>
+          <label>Resolución: <select id="resolutionSelect">
+            <option value="">Selecciona cámara primero</option>
+          </select></label><br>
+          <label>FPS: <input type="number" id="fps" min="1" max="60" value="30" style="width: 70px;"></label>
         </fieldset>
 
         <fieldset>
@@ -177,18 +217,35 @@
           <select id="micSelect" style="width: 200px;"></select>
           <button id="refreshMics">↻ Refrescar</button><br>
           <label><input type="checkbox" id="includeAudio" checked> Incluir audio</label><br>
-          <label><input type="checkbox" id="noiseReduction"> Reducción de ruido</label><br>
+          <label><input type="checkbox" id="noiseReduction"> Reducción de ruido (Chromium DSP)</label><br>
+          <label><input type="checkbox" id="advancedNoiseReduction"> RNNoise avanzado (Experimental)</label><br>
+          <label><input type="checkbox" id="echoCancellation" checked> Cancelación de eco</label><br>
+          <label><input type="checkbox" id="autoGainControl" checked> Control automático de ganancia</label><br>
           <button id="testMic">🎤 Probar micrófono</button>
         </fieldset>
 
         <fieldset>
-          <legend>⚙ Configuración</legend>
-          <label>FPS: <input type="number" id="fps" min="1" max="60" value="30" style="width: 70px;"></label><br>
-          <label>Bitrate video: <input type="number" id="bitrate" value="3000" style="width: 100px;"> kbps</label>
+          <legend>⚙ Configuración de Streaming</legend>
+          <label>Bitrate video: <input type="number" id="bitrate" value="3000" style="width: 100px;"> kbps</label><br>
+          <label><input type="checkbox" id="hardwareAcceleration" checked> Aceleración hardware (NVENC/AMF)</label><br>
+          <button id="applyBitrate" class="secondary">Aplicar bitrate</button>
         </fieldset>
       </div>
       
       <div>
+        <fieldset>
+          <legend>🖥 Vista Previa Local</legend>
+          <video id="localPreview" autoplay muted playsinline style="width:100%;max-width:400px;background:black;border-radius:8px;"></video>
+          <div class="stats" id="senderStats" style="display:none;">
+            <div class="stat-item"><span class="stat-label">Bitrate real:</span><span id="realBitrate">0</span> kbps</div>
+            <div class="stat-item"><span class="stat-label">FPS real:</span><span id="realFPS">0</span> fps</div>
+            <div class="stat-item"><span class="stat-label">Packets lost:</span><span id="packetLoss">0</span>%</div>
+            <div class="stat-item"><span class="stat-label">RTT:</span><span id="rtt">0</span> ms</div>
+            <div class="stat-item"><span class="stat-label">Resolución:</span><span id="realResolution">-</span></div>
+            <div class="stat-item"><span class="stat-label">Codec:</span><span id="codec">-</span></div>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>🔌 Conexión al Receptor</legend>
           <label>IP del receptor: <input type="text" id="receiverIP" value="localhost" placeholder="ej: 192.168.1.100"></label><br>
@@ -224,6 +281,7 @@
         <fieldset>
           <legend>📺 Controles de Video</legend>
           <button id="fullscreenBtn">🖥 Pantalla Completa</button>
+          <button id="downloadStats">📊 Descargar estadísticas</button>
         </fieldset>
       </div>
       
@@ -231,6 +289,14 @@
         <fieldset>
           <legend>🎬 Video Remoto</legend>
           <video id="remoteVideo" autoplay playsinline></video>
+          <div class="stats" id="receiverStats" style="display:none;">
+            <div class="stat-item"><span class="stat-label">Bitrate real:</span><span id="recvBitrate">0</span> kbps</div>
+            <div class="stat-item"><span class="stat-label">FPS real:</span><span id="recvFPS">0</span> fps</div>
+            <div class="stat-item"><span class="stat-label">Packets lost:</span><span id="recvPacketLoss">0</span>%</div>
+            <div class="stat-item"><span class="stat-label">Jitter:</span><span id="jitter">0</span> ms</div>
+            <div class="stat-item"><span class="stat-label">Resolución:</span><span id="recvResolution">-</span></div>
+            <div class="stat-item"><span class="stat-label">Codec:</span><span id="recvCodec">-</span></div>
+          </div>
         </fieldset>
 
         <div class="log" id="receiverLog"></div>
