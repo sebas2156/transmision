@@ -15,6 +15,8 @@ let lastBytesSent = 0;
 let lastBytesReceived = 0;
 let lastStatsTime = 0;
 
+let currentScanningDeviceId = null;
+
 const resolutionCache = new Map();
 
 // Colas para ICE candidates
@@ -163,16 +165,20 @@ const RESOLUTION_TEST_LIST = [
 ];
 
 async function getActuallySupportedResolutions(deviceId) {
+  currentScanningDeviceId = deviceId;
+
   if (resolutionCache.has(deviceId)) {
-    const cached = resolutionCache.get(deviceId);
-    logEmitter(`✔ ${cached.length} modos (cache)`);
-    return cached;
+    return resolutionCache.get(deviceId);
   }
 
   const supported = [];
   logEmitter('🔍 Escaneando hardware con { exact }...');
 
   for (const res of RESOLUTION_TEST_LIST) {
+    if (currentScanningDeviceId !== deviceId) {
+      logEmitter('⏹ Escaneo abortado: cambio de cámara');
+      return null;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -217,6 +223,7 @@ cameraSelect.addEventListener('change', async () => {
 
   logEmitter('🔍 Analizando cámara...');
   const modes = await getActuallySupportedResolutions(deviceId);
+  if (!modes) return; // cancelado por un escaneo más nuevo
   populateResolutionSelect(modes);
   syncFpsSlider();
   startLocalPreview();
@@ -342,12 +349,12 @@ async function startSenderStream() {
   if (resolution && resolution.includes('x')) {
     const [resPart, fpsPart] = resolution.split('@');
     const [width, height] = resPart.split('x');
-    videoConstraints.width = { ideal: parseInt(width) };
-    videoConstraints.height = { ideal: parseInt(height) };
+    videoConstraints.width = { exact: parseInt(width) };
+    videoConstraints.height = { exact: parseInt(height) };
     const resFps = fpsPart ? parseInt(fpsPart) : 60;
-    videoConstraints.frameRate = { ideal: Math.min(resFps, sliderFps) };
+    videoConstraints.frameRate = { ideal: Math.min(resFps, sliderFps), max: Math.min(resFps, sliderFps) };
   } else {
-    videoConstraints.frameRate = { ideal: sliderFps };
+    videoConstraints.frameRate = { ideal: sliderFps, max: sliderFps };
   }
 
   const audioConstraints = includeAudio ? {
@@ -391,6 +398,16 @@ function setOpusLowLatency(sdp) {
       sdp = sdp.replace(match[0], `${match[0]}\r\na=fmtp:${pt} ${params}`);
     }
   }
+  return sdp;
+}
+
+function optimizeVideoSDP(sdp) {
+  return sdp.replace('useinbandfec=1', 'useinbandfec=1;video_signal_type=video;x-google-min-bitrate=2000;x-google-max-bitrate=6000');
+}
+
+function forceHighQuality(sdp) {
+  sdp = sdp.replace(/a=mid:video\r\n/g, `a=mid:video\r\nb=AS:5000\r\nb=TIAS:5000000\r\n`);
+  sdp = sdp.replace("packetization-mode=1", "packetization-mode=1;profile-level-id=64001f");
   return sdp;
 }
 
@@ -480,6 +497,9 @@ connectSenderBtn.addEventListener('click', async () => {
     senderStream = await startSenderStream();
     const senderVideoTrack = senderStream.getVideoTracks()[0];
     if (senderVideoTrack) {
+      if ('contentHint' in senderVideoTrack) {
+        senderVideoTrack.contentHint = 'detail';
+      }
       const s = senderVideoTrack.getSettings();
       document.getElementById('realResolution').textContent = `${s.width}x${s.height}`;
       logEmitter(`📷 Resolución REAL: ${s.width}x${s.height}`);
@@ -536,6 +556,8 @@ connectSenderBtn.addEventListener('click', async () => {
     // Crear oferta con Opus baja latencia
     const offer = await senderPeer.createOffer();
     offer.sdp = setOpusLowLatency(offer.sdp);
+    offer.sdp = optimizeVideoSDP(offer.sdp);
+    offer.sdp = forceHighQuality(offer.sdp);
     await senderPeer.setLocalDescription(offer);
     logEmitter('✔ Oferta SDP creada (Opus low-latency)');
     
@@ -890,6 +912,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (cameraSelect.options.length > 0) {
     const defaultCam = cameraSelect.value;
     const modes = await getActuallySupportedResolutions(defaultCam);
+    if (!modes) return;
     populateResolutionSelect(modes);
     if (resolutionSelect.options.length > 0) {
       resolutionSelect.selectedIndex = resolutionSelect.options.length - 1;

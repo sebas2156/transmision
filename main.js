@@ -20,6 +20,9 @@ app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-features', 'WebRtcVideoTcmalloc');
+app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,VaapiVideoEncoder,WebRtc-H264HighProfile');
 // Se evitan: force_high_performance_gpu, enable-hardware-overlays,
 // disable-software-rasterizer, disable-gpu-vsync (pueden causar fugas)
 
