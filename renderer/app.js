@@ -9,6 +9,7 @@ let receiverPeer = null;
 let signalingSocket = null;
 let myClientId = null;
 let statsInterval = null;
+let currentSenderId = null;
 
 const resolutionCache = new Map();
 
@@ -351,18 +352,21 @@ async function startSenderStream() {
     autoGainControl: false
   } : false;
   
-  // Liberar preview antes de abrir nuevo stream (Windows bug)
+  // Liberar preview viejo para evitar conflicto de hardware
   if (previewStream) {
     previewStream.getTracks().forEach(t => t.stop());
-    previewStream = null;
   }
   
-  const stream = await navigator.mediaDevices.getUserMedia({
+  // Crear stream de transmisión
+  senderStream = await navigator.mediaDevices.getUserMedia({
     video: videoConstraints,
     audio: audioConstraints
   });
   
-  return stream;
+  // Reusar el stream como preview para que el video no se congele
+  localPreview.srcObject = senderStream;
+  
+  return senderStream;
 }
 
 // ===========================
@@ -648,7 +652,7 @@ startServerBtn.addEventListener('click', () => {
     logReceiver(`📡 Señal: ${signal.type}`);
     
     if (signal.type === 'offer') {
-      await handleOffer(signal.data);
+      await handleOffer(signal.data, signal.senderId);
     } else if (signal.type === 'answer') {
       if (receiverPeer && receiverPeer.signalingState === 'have-local-offer') {
         await receiverPeer.setRemoteDescription(new RTCSessionDescription(signal.data.sdp));
@@ -690,6 +694,7 @@ stopServerBtn.addEventListener('click', () => {
     receiverStream = null;
   }
   remoteVideo.srcObject = null;
+  currentSenderId = null;
   pendingReceiverIceCandidates = [];
   
   if (statsInterval) {
@@ -715,9 +720,10 @@ window.electronAPI.onServerError((error) => {
   logReceiver(`❌ Error: ${error}`);
 });
 
-async function handleOffer(offerMessage) {
+async function handleOffer(offerMessage, senderId) {
   if (receiverPeer) receiverPeer.close();
   
+  currentSenderId = senderId;
   receiverPeer = new RTCPeerConnection(configuration);
   pendingReceiverIceCandidates = [];
   
@@ -734,8 +740,8 @@ async function handleOffer(offerMessage) {
   };
   
   receiverPeer.onicecandidate = (event) => {
-    if (event.candidate) {
-      window.electronAPI.wsBroadcast({ 
+    if (event.candidate && currentSenderId) {
+      window.electronAPI.wsSendTo(currentSenderId, { 
         type: 'candidate', 
         candidate: serializeCandidate(event.candidate),
         fromPeer: 'receiver'
@@ -759,7 +765,7 @@ async function handleOffer(offerMessage) {
     const answer = await receiverPeer.createAnswer();
     await receiverPeer.setLocalDescription(answer);
     
-    window.electronAPI.wsBroadcast({ 
+    window.electronAPI.wsSendTo(currentSenderId, { 
       type: 'answer', 
       sdp: {
         type: receiverPeer.localDescription.type,
