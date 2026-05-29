@@ -14,6 +14,11 @@ let currentSenderId = null;
 let lastBytesSent = 0;
 let lastBytesReceived = 0;
 let lastStatsTime = 0;
+let currentAdaptiveBitrate = 0;
+const ADAPTIVE_RTT_THRESHOLD = 300;
+const ADAPTIVE_LOSS_THRESHOLD = 10;
+const ADAPTIVE_REDUCE = 0.85;
+const ADAPTIVE_INCREASE = 1.10;
 
 let currentScanningDeviceId = null;
 
@@ -173,6 +178,12 @@ async function getActuallySupportedResolutions(deviceId) {
 
   const supported = [];
   logEmitter('🔍 Escaneando hardware con { exact }...');
+
+  // Liberar preview para que la cámara no esté ocupada durante el escaneo
+  if (previewStream) {
+    previewStream.getTracks().forEach(t => t.stop());
+    previewStream = null;
+  }
 
   for (const res of RESOLUTION_TEST_LIST) {
     if (currentScanningDeviceId !== deviceId) {
@@ -405,8 +416,8 @@ function optimizeVideoSDP(sdp) {
   return sdp.replace('useinbandfec=1', 'useinbandfec=1;video_signal_type=video;x-google-min-bitrate=2000;x-google-max-bitrate=6000');
 }
 
-function forceHighQuality(sdp) {
-  sdp = sdp.replace(/a=mid:video\r\n/g, `a=mid:video\r\nb=AS:5000\r\nb=TIAS:5000000\r\n`);
+function forceHighQuality(sdp, bitrateKbps) {
+  sdp = sdp.replace(/a=mid:video\r\n/g, `a=mid:video\r\nb=AS:${bitrateKbps}\r\nb=TIAS:${bitrateKbps * 1000}\r\n`);
   sdp = sdp.replace("packetization-mode=1", "packetization-mode=1;profile-level-id=64001f");
   return sdp;
 }
@@ -476,8 +487,35 @@ async function updateStats(peer, isSender = true) {
       }
       
       if (candidateStats && isSender) {
-        document.getElementById('rtt').textContent = 
-          candidateStats.currentRoundTripTime ? (candidateStats.currentRoundTripTime * 1000).toFixed(0) : '0';
+        const rttMs = candidateStats.currentRoundTripTime ? candidateStats.currentRoundTripTime * 1000 : 0;
+        document.getElementById('rtt').textContent = rttMs.toFixed(0);
+        
+        // Modo adaptativo
+        if (document.getElementById('adaptiveBitrate').checked && videoStats) {
+          const loss = videoStats.packetsLost || 0;
+          const targetBitrate = parseInt(document.getElementById('bitrate').value) || 3000;
+          if (currentAdaptiveBitrate === 0) currentAdaptiveBitrate = targetBitrate;
+          
+          if (rttMs > ADAPTIVE_RTT_THRESHOLD || loss > ADAPTIVE_LOSS_THRESHOLD) {
+            currentAdaptiveBitrate = Math.round(currentAdaptiveBitrate * ADAPTIVE_REDUCE);
+            logEmitter(`⚡ Red adaptativa: bajando a ${currentAdaptiveBitrate} kbps (RTT:${rttMs.toFixed(0)}ms pérdida:${loss})`);
+          } else if (rttMs < 100 && loss === 0 && currentAdaptiveBitrate < targetBitrate) {
+            currentAdaptiveBitrate = Math.min(targetBitrate, Math.round(currentAdaptiveBitrate * ADAPTIVE_INCREASE));
+            logEmitter(`⚡ Red estable: subiendo a ${currentAdaptiveBitrate} kbps`);
+          }
+          
+          const senders = peer.getSenders();
+          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+          if (videoSender && currentAdaptiveBitrate > 0) {
+            const params = videoSender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+            const currentVal = (params.encodings[0].maxBitrate || 0) / 1000;
+            if (Math.abs(currentVal - currentAdaptiveBitrate) > 50) {
+              params.encodings[0].maxBitrate = currentAdaptiveBitrate * 1000;
+              await videoSender.setParameters(params);
+            }
+          }
+        }
       }
       
       lastStatsTime = now;
@@ -497,8 +535,9 @@ connectSenderBtn.addEventListener('click', async () => {
     senderStream = await startSenderStream();
     const senderVideoTrack = senderStream.getVideoTracks()[0];
     if (senderVideoTrack) {
+      const hint = document.getElementById('contentHintSelect').value;
       if ('contentHint' in senderVideoTrack) {
-        senderVideoTrack.contentHint = 'detail';
+        senderVideoTrack.contentHint = hint;
       }
       const s = senderVideoTrack.getSettings();
       document.getElementById('realResolution').textContent = `${s.width}x${s.height}`;
@@ -525,6 +564,9 @@ connectSenderBtn.addEventListener('click', async () => {
       logEmitter('🚀 Aceleración hardware habilitada (NVENC/AMF/Intel QuickSync)');
     }
     
+    // Cola de candidatos salientes
+    let pendingOutgoingCandidates = [];
+    
     // ICE candidate handler
     senderPeer.onicecandidate = (event) => {
       if (event.candidate) {
@@ -535,6 +577,8 @@ connectSenderBtn.addEventListener('click', async () => {
         };
         if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
           signalingSocket.send(JSON.stringify(msg));
+        } else {
+          pendingOutgoingCandidates.push(msg);
         }
       }
     };
@@ -557,7 +601,8 @@ connectSenderBtn.addEventListener('click', async () => {
     const offer = await senderPeer.createOffer();
     offer.sdp = setOpusLowLatency(offer.sdp);
     offer.sdp = optimizeVideoSDP(offer.sdp);
-    offer.sdp = forceHighQuality(offer.sdp);
+    const bitrateVal = parseInt(document.getElementById('bitrate').value) || 5000;
+    offer.sdp = forceHighQuality(offer.sdp, bitrateVal);
     await senderPeer.setLocalDescription(offer);
     logEmitter('✔ Oferta SDP creada (Opus low-latency)');
     
@@ -579,6 +624,9 @@ connectSenderBtn.addEventListener('click', async () => {
         fromPeer: 'sender'
       };
       signalingSocket.send(JSON.stringify(offerMessage));
+      // Vaciar cola de candidatos generados antes de abrir el socket
+      pendingOutgoingCandidates.forEach(msg => signalingSocket.send(JSON.stringify(msg)));
+      pendingOutgoingCandidates = [];
       logEmitter('📡 Oferta enviada');
     };
     
@@ -626,6 +674,10 @@ connectSenderBtn.addEventListener('click', async () => {
     
     connectSenderBtn.disabled = true;
     disconnectSenderBtn.disabled = false;
+    // Deshabilitar controles de cámara mientras se transmite
+    cameraSelect.disabled = true;
+    resolutionSelect.disabled = true;
+    fpsSlider.disabled = true;
     
   } catch (err) {
     logEmitter(`❌ Error: ${err.message}`);
@@ -657,6 +709,9 @@ function disconnectSender() {
   pendingSenderIceCandidates = [];
   connectSenderBtn.disabled = false;
   disconnectSenderBtn.disabled = true;
+  cameraSelect.disabled = false;
+  resolutionSelect.disabled = false;
+  fpsSlider.disabled = false;
   document.getElementById('senderStats').style.display = 'none';
   logEmitter('⏹ Desconectado');
   startLocalPreview();
@@ -667,38 +722,39 @@ disconnectSenderBtn.addEventListener('click', disconnectSender);
 // ===========================
 // RECEPTOR
 // ===========================
+// Listener de señalización registrado UNA vez (fuera del botón)
+window.electronAPI.onSignalReceived(async (signal) => {
+  logReceiver(`📡 Señal: ${signal.type}`);
+  
+  if (signal.type === 'offer') {
+    await handleOffer(signal.data, signal.senderId);
+  } else if (signal.type === 'answer') {
+    if (receiverPeer && receiverPeer.signalingState === 'have-local-offer') {
+      await receiverPeer.setRemoteDescription(new RTCSessionDescription(signal.data.sdp));
+      logReceiver('✅ Answer establecido');
+      
+      for (const candidate of pendingReceiverIceCandidates) {
+        try {
+          await receiverPeer.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {}
+      }
+      pendingReceiverIceCandidates = [];
+    }
+  } else if (signal.type === 'candidate' && signal.data.candidate) {
+    if (receiverPeer) {
+      if (receiverPeer.remoteDescription) {
+        await receiverPeer.addIceCandidate(new RTCIceCandidate(signal.data.candidate));
+      } else {
+        pendingReceiverIceCandidates.push(signal.data.candidate);
+      }
+    }
+  }
+});
+
 startServerBtn.addEventListener('click', () => {
   const port = parseInt(serverPort.value) || 3000;
   
   window.electronAPI.startServer(port);
-  
-  window.electronAPI.onSignalReceived(async (signal) => {
-    logReceiver(`📡 Señal: ${signal.type}`);
-    
-    if (signal.type === 'offer') {
-      await handleOffer(signal.data, signal.senderId);
-    } else if (signal.type === 'answer') {
-      if (receiverPeer && receiverPeer.signalingState === 'have-local-offer') {
-        await receiverPeer.setRemoteDescription(new RTCSessionDescription(signal.data.sdp));
-        logReceiver('✅ Answer establecido');
-        
-        for (const candidate of pendingReceiverIceCandidates) {
-          try {
-            await receiverPeer.addIceCandidate(new RTCIceCandidate(candidate));
-          } catch (e) {}
-        }
-        pendingReceiverIceCandidates = [];
-      }
-    } else if (signal.type === 'candidate' && signal.data.candidate) {
-      if (receiverPeer) {
-        if (receiverPeer.remoteDescription) {
-          await receiverPeer.addIceCandidate(new RTCIceCandidate(signal.data.candidate));
-        } else {
-          pendingReceiverIceCandidates.push(signal.data.candidate);
-        }
-      }
-    }
-  });
   
   startServerBtn.disabled = true;
   stopServerBtn.disabled = false;
@@ -707,7 +763,6 @@ startServerBtn.addEventListener('click', () => {
 
 stopServerBtn.addEventListener('click', () => {
   window.electronAPI.stopServer();
-  window.electronAPI.removeSignalListener();
   
   if (receiverPeer) {
     receiverPeer.close();

@@ -253,6 +253,14 @@
           <legend>⚙ Configuración de Streaming</legend>
           <label>Bitrate video: <input type="number" id="bitrate" value="3000" style="width: 100px;"> kbps</label><br>
           <label><input type="checkbox" id="hardwareAcceleration" checked> Aceleración hardware (NVENC/AMF)</label><br>
+          <label><input type="checkbox" id="adaptiveBitrate"> Modo adaptativo (ajusta bitrate según red)</label><br>
+          <label>Content Hint:
+            <select id="contentHintSelect">
+              <option value="motion">Motion (webcam - movimiento fluido)</option>
+              <option value="detail" selected>Detail (capturadora - detalle fino)</option>
+              <option value="text">Text (texto nítido)</option>
+            </select>
+          </label><br>
           <button id="applyBitrate" class="secondary">Aplicar bitrate</button>
         </fieldset>
       </div>
@@ -264,7 +272,7 @@
           <div class="stats" id="senderStats" style="display:none;">
             <div class="stat-item"><span class="stat-label">Bitrate real:</span><span id="realBitrate">0</span> kbps</div>
             <div class="stat-item"><span class="stat-label">FPS real:</span><span id="realFPS">0</span> fps</div>
-            <div class="stat-item"><span class="stat-label">Packets lost:</span><span id="packetLoss">0</span>%</div>
+            <div class="stat-item"><span class="stat-label">Paq. perdidos:</span><span id="packetLoss">0</span></div>
             <div class="stat-item"><span class="stat-label">RTT:</span><span id="rtt">0</span> ms</div>
             <div class="stat-item"><span class="stat-label">Resolución:</span><span id="realResolution">-</span></div>
             <div class="stat-item"><span class="stat-label">Codec:</span><span id="codec">-</span></div>
