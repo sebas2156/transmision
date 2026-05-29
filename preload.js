@@ -30,4 +30,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeSignalListener: () => {
     ipcRenderer.removeAllListeners('signal-received');
   },
+
+  hideCursor: (bool) => ipcRenderer.send('cursor-control', bool),
 });

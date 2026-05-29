@@ -11,6 +11,10 @@ let myClientId = null;
 let statsInterval = null;
 let currentSenderId = null;
 
+let lastBytesSent = 0;
+let lastBytesReceived = 0;
+let lastStatsTime = 0;
+
 const resolutionCache = new Map();
 
 // Colas para ICE candidates
@@ -56,6 +60,7 @@ const serverPort = document.getElementById('serverPort');
 const receiverLog = document.getElementById('receiverLog');
 const localIPSpan = document.getElementById('localIP');
 const downloadStatsBtn = document.getElementById('downloadStats');
+const shield = document.getElementById('videoShield');
 
 // ===========================
 // Funciones de log
@@ -421,47 +426,44 @@ async function updateStats(peer, isSender = true) {
   
   try {
     const stats = await peer.getStats();
+    const now = performance.now();
     let videoStats = null;
     let candidateStats = null;
     
     stats.forEach(report => {
-      if (report.type === 'outbound-rtp' && report.kind === 'video' && isSender) {
-        videoStats = report;
-      }
-      if (report.type === 'inbound-rtp' && report.kind === 'video' && !isSender) {
-        videoStats = report;
-      }
-      if (report.type === 'candidate-pair' && report.nominated) {
-        candidateStats = report;
-      }
+      if (report.type === 'outbound-rtp' && report.kind === 'video' && isSender) videoStats = report;
+      if (report.type === 'inbound-rtp' && report.kind === 'video' && !isSender) videoStats = report;
+      if (report.type === 'candidate-pair' && report.nominated) candidateStats = report;
     });
     
-    if (isSender) {
-      document.getElementById('senderStats').style.display = 'grid';
-      if (videoStats) {
-        document.getElementById('realBitrate').textContent = 
-          videoStats.bytesSent ? ((videoStats.bytesSent * 8 / 1024) / 1).toFixed(0) : '0';
-        document.getElementById('realFPS').textContent = 
-          videoStats.framesPerSecond || '0';
-        document.getElementById('packetLoss').textContent = 
-          videoStats.packetsLost || '0';
+    if (videoStats) {
+      const timeDiff = (now - lastStatsTime) / 1000;
+      
+      if (isSender) {
+        const bytes = videoStats.bytesSent;
+        const bitrate = Math.round(((bytes - lastBytesSent) * 8) / timeDiff / 1024);
+        document.getElementById('senderStats').style.display = 'grid';
+        document.getElementById('realBitrate').textContent = bitrate > 0 ? bitrate : 0;
+        document.getElementById('realFPS').textContent = Math.round(videoStats.framesPerSecond || 0);
+        document.getElementById('packetLoss').textContent = videoStats.packetsLost || 0;
+        lastBytesSent = bytes;
+      } else {
+        const bytes = videoStats.bytesReceived;
+        const bitrate = Math.round(((bytes - lastBytesReceived) * 8) / timeDiff / 1024);
+        document.getElementById('receiverStats').style.display = 'grid';
+        document.getElementById('recvBitrate').textContent = bitrate > 0 ? bitrate : 0;
+        document.getElementById('recvFPS').textContent = Math.round(videoStats.framesPerSecond || 0);
+        document.getElementById('recvPacketLoss').textContent = videoStats.packetsLost || 0;
+        document.getElementById('jitter').textContent = (videoStats.jitter * 1000).toFixed(2);
+        lastBytesReceived = bytes;
       }
-      if (candidateStats) {
+      
+      if (candidateStats && isSender) {
         document.getElementById('rtt').textContent = 
           candidateStats.currentRoundTripTime ? (candidateStats.currentRoundTripTime * 1000).toFixed(0) : '0';
       }
-    } else {
-      document.getElementById('receiverStats').style.display = 'grid';
-      if (videoStats) {
-        document.getElementById('recvBitrate').textContent = 
-          videoStats.bytesReceived ? ((videoStats.bytesReceived * 8 / 1024) / 1).toFixed(0) : '0';
-        document.getElementById('recvFPS').textContent = 
-          videoStats.framesPerSecond || '0';
-        document.getElementById('recvPacketLoss').textContent = 
-          videoStats.packetsLost || '0';
-        document.getElementById('jitter').textContent = 
-          videoStats.jitter ? (videoStats.jitter * 1000).toFixed(0) : '0';
-      }
+      
+      lastStatsTime = now;
     }
   } catch (err) {
     console.error('Error obteniendo stats:', err);
@@ -781,11 +783,46 @@ async function handleOffer(offerMessage, senderId) {
 }
 
 // ===========================
-// Pantalla completa
+// Pantalla completa modo kiosko
 // ===========================
 document.getElementById('fullscreenBtn').addEventListener('click', () => {
-  if (remoteVideo.requestFullscreen) remoteVideo.requestFullscreen();
+  if (remoteVideo.requestFullscreen) {
+    remoteVideo.requestFullscreen();
+  }
 });
+
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) {
+    remoteVideo.classList.add('video-locked');
+    remoteVideo.controls = false;
+    shield.style.display = 'block';
+    shield.className = 'full-screen-shield';
+    remoteVideo.style.cursor = 'none';
+    document.body.style.cursor = 'none';
+    if (window.electronAPI && window.electronAPI.hideCursor) {
+      window.electronAPI.hideCursor(true);
+    }
+  } else {
+    remoteVideo.classList.remove('video-locked');
+    shield.style.display = 'none';
+    remoteVideo.style.cursor = 'default';
+    document.body.style.cursor = 'default';
+    if (window.electronAPI && window.electronAPI.hideCursor) {
+      window.electronAPI.hideCursor(false);
+    }
+  }
+});
+
+window.addEventListener('contextmenu', (e) => {
+  if (document.fullscreenElement) e.preventDefault();
+}, false);
+
+window.addEventListener('keydown', (e) => {
+  if (document.fullscreenElement) {
+    const forbidden = [' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'f'];
+    if (forbidden.includes(e.key)) e.preventDefault();
+  }
+}, true);
 
 // ===========================
 // Descargar estadísticas

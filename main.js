@@ -2,6 +2,16 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
 
+// ========== IPC: cursor ==========
+ipcMain.on('cursor-control', (event, shouldHide) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (shouldHide) {
+    win.webContents.insertCSS('html, body, * { cursor: none !important; }');
+  } else {
+    win.webContents.insertCSS('html, body, * { cursor: default !important; }');
+  }
+});
+
 // ========== FLAGS GPU optimizados ==========
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-zero-copy');
@@ -41,6 +51,7 @@ function createWindow() {
     autoHideMenuBar: true,
   });
 
+  mainWindow.setMenu(null);
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 

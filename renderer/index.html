@@ -75,6 +75,30 @@
       object-fit: contain;
     }
     
+    /* Kiosko: sin cursor, sin clics, sin selección */
+    .video-locked {
+      cursor: none !important;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    
+    #remoteVideo::-webkit-media-controls {
+      display: none !important;
+    }
+    
+    #remoteVideo:fullscreen { cursor: none !important; }
+    #remoteVideo:-webkit-full-screen * { cursor: none !important; }
+    
+    .full-screen-shield {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      z-index: 99999;
+      cursor: none !important;
+      pointer-events: all;
+    }
+    
     .controls { 
       margin: 15px 0; 
     }
@@ -289,7 +313,10 @@
       <div>
         <fieldset>
           <legend>🎬 Video Remoto</legend>
-          <video id="remoteVideo" autoplay playsinline></video>
+          <div id="receiverContainer" style="position:relative;">
+            <video id="remoteVideo" autoplay playsinline></video>
+            <div id="videoShield" style="display:none;"></div>
+          </div>
           <div class="stats" id="receiverStats" style="display:none;">
             <div class="stat-item"><span class="stat-label">Bitrate real:</span><span id="recvBitrate">0</span> kbps</div>
             <div class="stat-item"><span class="stat-label">FPS real:</span><span id="recvFPS">0</span> fps</div>
