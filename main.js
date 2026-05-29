@@ -1,19 +1,17 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const WebSocket = require('ws');
-const { execFile } = require('child_process');
 
-// ========== FLAGS GPU (NVENC) ==========
+// ========== FLAGS GPU optimizados ==========
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-native-gpu-memory-buffers');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
-// Los siguientes flags pueden causar fugas de memoria según el driver GPU:
-// app.commandLine.appendSwitch('enable-gpu-rasterization');
-// app.commandLine.appendSwitch('enable-zero-copy');
-// app.commandLine.appendSwitch('enable-hardware-overlays');
-// app.commandLine.appendSwitch('disable-software-rasterizer');
-// app.commandLine.appendSwitch('force_high_performance_gpu');
-// app.commandLine.appendSwitch('disable-gpu-vsync');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+// Se evitan: force_high_performance_gpu, enable-hardware-overlays,
+// disable-software-rasterizer, disable-gpu-vsync (pueden causar fugas)
 
 let mainWindow;
 let wss = null;
@@ -163,110 +161,4 @@ ipcMain.on('ws-send-to', (event, clientId, data) => {
   }
 });
 
-// ===========================
-// FFmpeg DirectShow resolutions
-// ===========================
-const FFMPEG_FPS_RANGE = [15, 24, 30, 60];
-
-function parseFFmpegOptions(output) {
-  const result = [];
-  const seen = new Set();
-  const lines = output.split('\n');
-
-  const regex = /pixel_format=(\S+)\s+min s=(\d+)x(\d+) fps=([\d.]+) max s=(\d+)x(\d+) fps=([\d.]+)/;
-
-  for (const line of lines) {
-    const m = line.match(regex);
-    if (!m) continue;
-
-    const fmt = m[1].toLowerCase();
-    let minW = parseInt(m[2]);
-    let minH = parseInt(m[3]);
-    const minFps = parseFloat(m[4]);
-    let maxW = parseInt(m[5]);
-    let maxH = parseInt(m[6]);
-    const maxFps = parseFloat(m[7]);
-    const isRange = minW !== maxW || minH !== maxH;
-
-    // YUY2/raw: solo resoluciones fijas (min===max) que son modos nativos
-    // MJPEG/H264: si es rango, usar la resolución máxima (el sensor sí la entrega comprimida)
-    if (isRange && fmt !== 'mjpeg' && fmt !== 'h264') continue;
-    if (isRange) { minW = maxW; minH = maxH; }
-
-    for (const fps of FFMPEG_FPS_RANGE) {
-      if (fps >= minFps && fps <= maxFps) {
-        const key = `${minW}x${minH}@${fps}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          result.push({ w: minW, h: minH, fps });
-        }
-      }
-    }
-  }
-
-  result.sort((a, b) => a.w * a.h - b.w * b.h);
-  return result;
-}
-
-ipcMain.handle('get-ffmpeg-resolutions', async (event, cameraLabel) => {
-  if (!cameraLabel) return { error: 'Sin nombre de cámara' };
-
-  // Buscar ffmpeg en PATH y ubicaciones comunes de Windows
-  const COMMON_FFMPEG_PATHS = [
-    'ffmpeg',
-    'ffmpeg.exe',
-    path.join('C:', 'ffmpeg', 'bin', 'ffmpeg.exe'),
-    path.join('C:', 'Program Files', 'ffmpeg', 'bin', 'ffmpeg.exe'),
-    path.join('C:', 'Program Files (x86)', 'ffmpeg', 'bin', 'ffmpeg.exe'),
-    path.join(process.env.LOCALAPPDATA || 'C:\\Users\\Default', 'Microsoft', 'WinGet', 'Packages', 'FFmpeg', 'ffmpeg.exe'),
-  ];
-
-  let ffmpegPath = null;
-  for (const p of COMMON_FFMPEG_PATHS) {
-    try {
-      await new Promise((resolve, reject) => {
-        const test = execFile(p, ['-version'], { timeout: 3000 });
-        test.on('error', reject);
-        test.on('close', code => code === 0 ? resolve() : reject());
-        test.stdin.end();
-      });
-      ffmpegPath = p;
-      break;
-    } catch {}
-  }
-
-  if (!ffmpegPath) {
-    return { error: 'ffmpeg no está instalado. Descargalo de https://ffmpeg.org o usa: winget install FFmpeg' };
-  }
-
-  return new Promise(resolve => {
-    const args = ['-f', 'dshow', '-list_options', 'true', '-i', `video=${cameraLabel}`];
-    const child = execFile(ffmpegPath, args, { timeout: 15000 });
-    let stderr = '';
-
-    child.stdout.on('data', () => {});
-
-    child.stderr.on('data', data => {
-      stderr += data.toString();
-    });
-
-    child.on('error', err => {
-      resolve({ error: `Error ejecutando ffmpeg: ${err.message}` });
-    });
-
-    child.on('close', code => {
-      const modes = parseFFmpegOptions(stderr);
-      if (modes.length > 0) {
-        resolve({ modes });
-      } else {
-        const sample = stderr.split('\n').slice(0, 20).join('\n');
-        resolve({
-          error: `Sin modos detectados (exit ${code})`,
-          debug: sample
-        });
-      }
-    });
-
-    child.stdin.end();
-  });
-});
+// FFmpeg eliminado: detección de resoluciones vía navigator.mediaDevices.getUserMedia con { exact }

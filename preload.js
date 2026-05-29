@@ -30,8 +30,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeSignalListener: () => {
     ipcRenderer.removeAllListeners('signal-received');
   },
-
-  getFFmpegResolutions: (cameraLabel) => {
-    return ipcRenderer.invoke('get-ffmpeg-resolutions', cameraLabel);
-  }
 });

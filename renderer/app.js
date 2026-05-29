@@ -147,88 +147,62 @@ async function refreshDevices() {
 }
 
 // ===========================
-// Poblar lista de resoluciones disponibles
+// Escáner de resoluciones nativas (reemplaza FFmpeg)
 // ===========================
-async function detectCameraResolutions(deviceId) {
-  resolutionSelect.innerHTML = '';
-  if (!deviceId) return;
+const RESOLUTION_TEST_LIST = [
+  { w: 320, h: 240 }, { w: 640, h: 480 }, { w: 800, h: 600 }, { w: 1024, h: 768 },
+  { w: 1280, h: 720 }, { w: 1366, h: 768 }, { w: 1600, h: 900 }, { w: 1920, h: 1080 },
+  { w: 2560, h: 1440 }, { w: 3840, h: 2160 },
+  { w: 1280, h: 800 }, { w: 1920, h: 1200 }, { w: 2048, h: 1080 },
+];
 
+async function getActuallySupportedResolutions(deviceId) {
   if (resolutionCache.has(deviceId)) {
     const cached = resolutionCache.get(deviceId);
-    cached.forEach(r => {
-      const label = r.native
-        ? `🎯 Nativa ${r.w}x${r.h} @${r.fps}fps`
-        : `${r.w}x${r.h} @${r.fps}fps`;
-      resolutionSelect.add(new Option(label, `${r.w}x${r.h}@${r.fps}`));
-    });
-    logEmitter(`✔ ${cached.length} modos`);
-    return;
+    logEmitter(`✔ ${cached.length} modos (cache)`);
+    return cached;
   }
 
-  logEmitter('🔍 Detectando resolución nativa...');
+  const supported = [];
+  logEmitter('🔍 Escaneando hardware con { exact }...');
 
-  let nw = 0, nh = 0, nfps = 30;
-  let nativeStream = null;
-  try {
-    nativeStream = await navigator.mediaDevices.getUserMedia({
-      video: { deviceId: { exact: deviceId } },
-      audio: false
-    });
-    const s = nativeStream.getVideoTracks()[0].getSettings();
-    nw = s.width; nh = s.height; nfps = Math.round(s.frameRate || 30);
-  } catch (e) {
-    logEmitter(`❌ Error accediendo a cámara: ${e.message}`);
-    resolutionSelect.add(new Option('Automático', ''));
-    return;
-  } finally {
-    if (nativeStream) nativeStream.getTracks().forEach(t => t.stop());
-  }
-
-  const ALL_RESOLUTIONS = [
-    { w: 320, h: 240 },
-    { w: 640, h: 480 },
-    { w: 800, h: 600 },
-    { w: 1024, h: 768 },
-    { w: 1280, h: 720 },
-    { w: 1366, h: 768 },
-    { w: 1600, h: 900 },
-    { w: 1920, h: 1080 },
-    { w: 2560, h: 1440 },
-    { w: 3840, h: 2160 },
-  ];
-
-  const found = [];
-  const added = new Set();
-
-  // Nativa siempre primero
-  const nativeKey = `${nw}x${nh}@${nfps}`;
-  added.add(nativeKey);
-  found.push({ w: nw, h: nh, fps: nfps, native: true });
-
-  for (const { w, h } of ALL_RESOLUTIONS) {
-    if (w === nw && h === nh && nfps === 30) continue;
-    // Para cada resolución, ofrecer FPS comunes
-    for (const fps of [15, 24, 30, 60]) {
-      const key = `${w}x${h}@${fps}`;
-      if (!added.has(key)) {
-        added.add(key);
-        found.push({ w, h, fps, native: false });
-      }
+  for (const res of RESOLUTION_TEST_LIST) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: deviceId },
+          width: { exact: res.w },
+          height: { exact: res.h }
+        },
+        audio: false,
+      });
+      const settings = stream.getVideoTracks()[0].getSettings();
+      supported.push({
+        w: settings.width,
+        h: settings.height,
+        fps: Math.round(settings.frameRate || 30),
+      });
+      stream.getTracks().forEach(t => t.stop());
+    } catch (e) {
+      // no es nativa, se ignora
     }
   }
 
-  found.sort((a, b) => a.w * a.h - b.w * b.h);
+  supported.sort((a, b) => a.w * a.h - b.w * b.h);
+  resolutionCache.set(deviceId, supported);
+  logEmitter(`✅ ${supported.length} resoluciones nativas detectadas`);
+  return supported;
+}
 
+function populateResolutionSelect(modes) {
   resolutionSelect.innerHTML = '';
-  found.forEach(r => {
-    const label = r.native
-      ? `🎯 Nativa ${r.w}x${r.h} @${r.fps}fps`
-      : `${r.w}x${r.h} @${r.fps}fps`;
-    resolutionSelect.add(new Option(label, `${r.w}x${r.h}@${r.fps}`));
+  if (modes.length === 0) {
+    resolutionSelect.add(new Option('Automático', ''));
+    return;
+  }
+  modes.forEach(m => {
+    resolutionSelect.add(new Option(`${m.w}x${m.h} @${m.fps}fps`, `${m.w}x${m.h}@${m.fps}`));
   });
-
-  resolutionCache.set(deviceId, found);
-  logEmitter(`✅ ${found.length} resoluciones disponibles (nativa: ${nw}x${nh})`);
 }
 
 cameraSelect.addEventListener('change', async () => {
@@ -236,14 +210,14 @@ cameraSelect.addEventListener('change', async () => {
   if (!deviceId) return;
 
   logEmitter('🔍 Analizando cámara...');
-  await detectCameraResolutions(deviceId);
+  const modes = await getActuallySupportedResolutions(deviceId);
+  populateResolutionSelect(modes);
   syncFpsSlider();
   startLocalPreview();
 });
 
 document.getElementById('refreshCameras').addEventListener('click', refreshDevices);
 document.getElementById('refreshMics').addEventListener('click', refreshDevices);
-refreshDevices();
 
 // ===========================
 // Helper: Serializar candidate manualmente
@@ -376,6 +350,12 @@ async function startSenderStream() {
     noiseSuppression: false,
     autoGainControl: false
   } : false;
+  
+  // Liberar preview antes de abrir nuevo stream (Windows bug)
+  if (previewStream) {
+    previewStream.getTracks().forEach(t => t.stop());
+    previewStream = null;
+  }
   
   const stream = await navigator.mediaDevices.getUserMedia({
     video: videoConstraints,
@@ -767,7 +747,11 @@ async function handleOffer(offerMessage) {
     logReceiver(`ICE: ${receiverPeer.iceConnectionState}`);
     if (receiverPeer.iceConnectionState === 'connected') {
       logReceiver('🎉 Conexión P2P establecida!');
+    } else if (receiverPeer.iceConnectionState === 'failed') {
+      logReceiver('❌ Conexión fallida');
+      remoteVideo.srcObject = null;
     }
+    // 'disconnected' no se toca: el video permanece congelado
   };
   
   try {
@@ -854,5 +838,26 @@ document.getElementById('testMic').addEventListener('click', async () => {
   }
 });
 
-logEmitter('🟢 Emisor listo - Selecciona cámara para preview');
+// ===========================
+// Auto-inicialización al cargar
+// ===========================
+window.addEventListener('DOMContentLoaded', async () => {
+  await refreshDevices();
+
+  if (cameraSelect.options.length > 0) {
+    const defaultCam = cameraSelect.value;
+    const modes = await getActuallySupportedResolutions(defaultCam);
+    populateResolutionSelect(modes);
+    if (resolutionSelect.options.length > 0) {
+      resolutionSelect.selectedIndex = resolutionSelect.options.length - 1;
+    }
+    syncFpsSlider();
+    startLocalPreview();
+    logEmitter('🚀 Autoconfiguración completada.');
+  } else {
+    logEmitter('⚠ No se detectaron cámaras.');
+  }
+});
+
+logEmitter('🟢 Emisor listo');
 logReceiver('🟢 Receptor listo - Inicia el servidor');
