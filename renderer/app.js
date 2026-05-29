@@ -59,15 +59,25 @@ const downloadStatsBtn = document.getElementById('downloadStats');
 // ===========================
 // Funciones de log
 // ===========================
+const MAX_LOG_LINES = 100;
+
+function trimLog(el) {
+  while (el.childElementCount > MAX_LOG_LINES) {
+    el.removeChild(el.firstElementChild);
+  }
+}
+
 function logEmitter(msg) { 
   const timestamp = new Date().toLocaleTimeString();
   senderLog.innerHTML += `[${timestamp}] ${msg}<br>`; 
+  trimLog(senderLog);
   senderLog.scrollTop = senderLog.scrollHeight; 
 }
 
 function logReceiver(msg) { 
   const timestamp = new Date().toLocaleTimeString();
   receiverLog.innerHTML += `[${timestamp}] ${msg}<br>`; 
+  trimLog(receiverLog);
   receiverLog.scrollTop = receiverLog.scrollHeight; 
 }
 

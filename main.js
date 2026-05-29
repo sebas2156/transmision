@@ -5,14 +5,15 @@ const { execFile } = require('child_process');
 
 // ========== FLAGS GPU (NVENC) ==========
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
-app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('enable-accelerated-video-decode');
 app.commandLine.appendSwitch('enable-accelerated-video-encode');
-app.commandLine.appendSwitch('enable-hardware-overlays');
-app.commandLine.appendSwitch('disable-software-rasterizer');
-app.commandLine.appendSwitch('force_high_performance_gpu');
-app.commandLine.appendSwitch('disable-gpu-vsync');
+// Los siguientes flags pueden causar fugas de memoria según el driver GPU:
+// app.commandLine.appendSwitch('enable-gpu-rasterization');
+// app.commandLine.appendSwitch('enable-zero-copy');
+// app.commandLine.appendSwitch('enable-hardware-overlays');
+// app.commandLine.appendSwitch('disable-software-rasterizer');
+// app.commandLine.appendSwitch('force_high_performance_gpu');
+// app.commandLine.appendSwitch('disable-gpu-vsync');
 
 let mainWindow;
 let wss = null;
